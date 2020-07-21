@@ -80,7 +80,9 @@ class Scenario():
     def __init__(self, model, seed,
                  ranking_options={},
                  observation_options={},
-                 intervention_options={}):
+                 intervention_options={},
+                 save_csv = "csv/temp_scenario.csv"):
+        self.save_csv = save_csv
         self.seed = seed
         self.N = model.N
         self.x_pos = model.x_pos
@@ -90,7 +92,7 @@ class Scenario():
         self.base_transmissions = model.transmissions
         self.ranking_options = ranking_options
         if ranking_options:
-            self.ranking = RANKINGS[ranking_options["name"]]
+            self.ranking = ranking_options["ranking"]
             print(f"Using {self.ranking.__name__} to rank")
         p_untracked =  observation_options.get("p_untracked", 0)
         self.n_untracked = int(p_untracked*model.N)
@@ -265,9 +267,15 @@ class Scenario():
         np.random.seed(self.seed)
         # iterate
         for t in range(t_max):
+            self.update(t)
+            print("here")
             if print_every and (t % print_every == 0):
                 print(f"t = {t} / {t_max}")
-            self.update(t)
+                self.counts = get_counts(self.states, self.quarantine)
+                #print("inside print every")
+                #print(self.counts, self.save_csv)
+                self.counts.to_csv(self.save_csv)
+
         # store as dataframes
         self.status = get_status(self.states, self.quarantine)
         self.counts = get_counts(self.states, self.quarantine)
