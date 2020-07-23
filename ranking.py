@@ -9,43 +9,6 @@ def csr_to_list(x):
     x_coo = x.tocoo()
     return zip(x_coo.row, x_coo.col, x_coo.data)
 
-def ranking_sib(t, model, observations, params):
-    """Inference starting from t_start.
-
-    Run sib from t_start to t, starting from all susceptible and
-    resetting the probas according to observations.
-
-    params["t_start"] : t_start
-    params["init"] : "all_S" (all susceptible) or "freqs" (frequency at t_start)
-
-    Returns: ranked dataframe probas[["i","rank","score","p_I","p_R","p_S"]]
-    If t < t_start cannot do the inference ranking, returns a random ranking.
-    """
-    t_start = params["t_start"]
-    infer = algo(initial_probas, model.x_pos, model.y_pos)
-    # shift by t_start
-    for obs in observations:
-        obs["t"] = obs["t_test"] - t_start
-        obs["t_I"] = obs["t"] - tau
-    infer.time_evolution(
-        model.recover_probas, model.transmissions[t_start:t+1], observations,
-        print_every=0
-    )
-    probas = pd.DataFrame(
-        infer.probas[t-t_start, :, :],
-        columns=["p_S", "p_I", "p_R"]
-    )
-    probas["i"] = range(model.N)
-    # some i will have the same probas
-    # -> we add a random value to shuffle the ranking
-    probas["rand"] = np.random.rand(model.N)
-    probas = probas.sort_values(by=["p_I", "rand"], ascending=False)
-    probas.reset_index(drop=True, inplace=True)
-    probas["rank"] = range(model.N)
-    probas["score"] = probas["p_I"]
-    return probas
-
-
 
 def ranking_inference(t, model, observations, params):
     """Inference starting from t_start.

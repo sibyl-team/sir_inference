@@ -40,6 +40,7 @@ def get_counts(states, quarantine):
     }
     counts["q"] = quarantine.sum(axis=1)
     counts = pd.DataFrame(counts)
+    counts["free_birds"] = ((states == 1) * (1-quarantine)).sum(axis=1)
     counts.index.name = "t"
     return counts
 
@@ -158,7 +159,7 @@ class Scenario():
             # list of people to test
             ranked = list(self.scores[t]["i"])
             already_detected = set(
-                obs["i"] for obs in self.observations if obs["s"] == 1
+                obs["i"] for obs in self.observations if (obs["s"] == 1 or obs["s"] == 2)
             )
             selected = [i for i in ranked if i not in already_detected]
             selected = selected[:n_obs]
@@ -268,13 +269,28 @@ class Scenario():
         # iterate
         for t in range(t_max):
             self.update(t)
-            print("here")
             if print_every and (t % print_every == 0):
                 print(f"t = {t} / {t_max}")
                 self.counts = get_counts(self.states, self.quarantine)
+                res = self.counts
+                print(f"state: S:{res['S'][t]}, I:{res['I'][t]}, R:{res['R'][t]} I+R:{res['I'][t]+res['R'][t]}")
+                obs = pd.DataFrame(self.observations)
+                obs_I = obs[["s", "i"]].drop_duplicates()
+                if len(obs)>0:
+                    #print(obs)
+                    S = obs['s'][obs['s']==0].count()
+                    I = obs_I['s'][obs_I['s']==1].count()
+                    R = obs['s'][obs['s']==2].count()
+                    print(f"obser: S:{S}, I:{I}, R:{R}, I+R:{I+R}")
+                    #print(f'{obs["source"].value_counts()}')
+                    fb = (self.states[t] == 1) @ (1-self.quarantine[t])
+                    print(f"free birds: {fb}")
+                    if fb == 0:
+                        self.ranking = RANKINGS["random"]
+                   # print(obs)
                 #print("inside print every")
                 #print(self.counts, self.save_csv)
-                self.counts.to_csv(self.save_csv)
+                self.counts.to_csv(self.save_csv, index=False, sep="\t")
 
         # store as dataframes
         self.status = get_status(self.states, self.quarantine)
@@ -336,3 +352,41 @@ class Scenario():
 
     def detected_by(self, source):
         return get_detected_by(self.observations, source)
+
+class Scenario_check_R(Scenario):
+    def update_observations(self, t):
+        """Assumes states[t] and scores[t] computed.
+        NOTE: s_true = actual status, s = assumed status
+        """
+        # ranking
+        n_detected = len([
+            obs["i"] for obs in self.observations
+            if obs["t_test"] == t - 1  and obs["s"] == 1
+        ])
+        n_obs = int(max(
+            self.observation_options.get("n_ranking", 0),
+            self.observation_options.get("k_ranking", 0) * n_detected
+        ))
+        if n_obs and self.ranking_options:
+            # list of people to test
+            ranked = list(self.scores[t]["i"])
+            already_detected = set(
+                obs["i"] for obs in self.observations if (obs["s"] == 1)
+            )
+            selected = [i for i in ranked if i not in already_detected]
+            selected = selected[:n_obs]
+            self.observations += self.generate_obs(t, "ranking", selected)
+        # random
+        n_obs = self.observation_options.get("n_random", 0)
+        selected = random_individuals(self.N, n_obs)
+        self.observations += self.generate_obs(t, "random", selected)
+        # infected
+        n_obs = self.observation_options.get("n_infected", 0)
+        selected = infected_individuals(self.states[t], n_obs)
+        self.observations += self.generate_obs(t, "infected", selected)
+        # symptomatic
+        p = self.observation_options.get("p_symptomatic", 0)
+        if p:
+            tau = self.observation_options["tau"]
+            selected = symptomatic_individuals(self.states, t, tau, p)
+            self.observations += self.generate_obs(t, "symptomatic", selected)
