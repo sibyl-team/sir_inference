@@ -61,7 +61,7 @@ def symptomatic_individuals(states, t, tau, p):
         return []
     # S at tI-1 and I at tI
     symptomatic, = np.where(
-        np.logical_and(states[tI - 1, :]==0, states[tI, :]==1)
+        np.logical_and(np.logical_and(states[tI - 1, :]==0, states[tI, :]==1), states[t,:]==1)
     )
     # select proportion p of them
     n_symptomatic = len(symptomatic)
