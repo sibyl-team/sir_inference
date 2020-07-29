@@ -211,12 +211,14 @@ class EpidemicModel():
             self.recover_probas, self.transmissions, print_every=print_every
         )
 
-    def load_transmissions(self, csv_file):
+    def load_transmissions(self, csv_file, new_lambda = None):
         print(f"Loading transmissions from {csv_file}")
         df = pd.read_csv(csv_file)
         assert all(df.columns == ["t","i","j","lamb"])
         assert df["i"].max() == df["j"].max() == self.N - 1
         tmax = df["t"].max() + 1
+        if new_lambda != None:
+            df["lamb"] = new_lambda
         transmissions = []
         for t in range(tmax):
             sub_data = df.query(f"t=={t}")

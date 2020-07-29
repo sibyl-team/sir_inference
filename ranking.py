@@ -73,9 +73,9 @@ def ranking_backtrack(t, model, observations, params):
     """
     delta = params["delta"]
     tau = params["tau"]
-    if (t < delta):
-        return ranking_random(t, model, observations, params)
-    t_start = t - delta
+    #if (t < delta):
+    #    return ranking_random(t, model, observations, params)
+    t_start = max(t - delta, 0)
     algo = MeanField if params["algo"] == "MF" else DynamicMessagePassing
     if params["init"] == "all_S":
         initial_probas = indicator(np.zeros(model.N))

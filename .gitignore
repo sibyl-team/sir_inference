@@ -6,7 +6,6 @@ __pycache__/
 .DS_Store
 
 # Jupyter Notebook
-*.ipynb
 .ipynb_checkpoints
 
 # data

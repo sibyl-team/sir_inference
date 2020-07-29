@@ -280,11 +280,16 @@ class Scenario():
                     #print(obs)
                     S = obs['s'][obs['s']==0].count()
                     I = obs_I['s'][obs_I['s']==1].count()
-                    R = obs['s'][obs['s']==2].count()
+                    R = obs_I['s'][obs_I['s']==2].count()
                     print(f"obser: S:{S}, I:{I}, R:{R}, I+R:{I+R}")
                     #print(f'{obs["source"].value_counts()}')
                     fb = (self.states[t] == 1) @ (1-self.quarantine[t])
                     print(f"free birds: {fb}")
+                    rank_obs_t = len(obs[(obs['s']==1) & (obs['source']=="ranking") & (obs['t_test']==t)])
+                    symp_obs_t = len(obs[(obs['s']==1) & (obs['source']=="symptomatic") & (obs['t_test']==t)])
+                    rank_obs = len(obs[(obs['s']==1) & (obs['source']=="ranking")])
+                    symp_obs = len(obs[(obs['s']==1) & (obs['source']=="symptomatic")])
+                    print(f"obs_symp:{symp_obs_t}({symp_obs}), obs_rank:{rank_obs_t}({rank_obs})")
                     if fb == 0:
                         self.ranking = RANKINGS["random"]
                    # print(obs)
