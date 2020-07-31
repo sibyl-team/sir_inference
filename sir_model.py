@@ -127,7 +127,7 @@ def get_infection_probas(states, transmissions):
     return infection_probas
 
 
-def propagate(current_states, infection_probas, recover_probas):
+def propagate(current_states, infection_probas, recover_probas, RandomStream = np.random):
     """
     - current_states[i] = state of i
     - infection_probas[i]  = proba that i get infected (if susceptible)
@@ -136,10 +136,10 @@ def propagate(current_states, infection_probas, recover_probas):
     next_states = np.zeros_like(current_states)
     for i, state in enumerate(current_states):
         if (state == 0):
-            infected = np.random.rand() < infection_probas[i]
+            infected = RandomStream.rand() < infection_probas[i]
             next_states[i] = 1 if infected else 0
         elif (state == 1):
-            recovered = np.random.rand() < recover_probas[i]
+            recovered = RandomStream.rand() < recover_probas[i]
             next_states[i] = 2 if recovered else 1
         else:
             next_states[i] = 2

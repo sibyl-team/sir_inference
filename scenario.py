@@ -99,6 +99,8 @@ class Scenario():
         self.n_untracked = int(p_untracked*model.N)
         self.observation_options = observation_options
         self.intervention_options = intervention_options
+        self.RandomState = np.random.RandomState(seed)
+        self.RandomObs = np.random.RandomState(seed)
 
     def select_untracked(self):
         print(f"Selecting {self.n_untracked}/{self.N} untracked individuals")
@@ -115,7 +117,8 @@ class Scenario():
             self.states[t-1], self.true_transmissions[t-1]
         )
         self.states[t] = propagate(
-            self.states[t-1], infection_probas, self.recover_probas
+            self.states[t-1], infection_probas, self.recover_probas,
+            RandomStream = self.RandomState
         )
 
     def update_scores(self, t):
@@ -135,10 +138,10 @@ class Scenario():
         for obs in list_obs:
             obs["s"] = obs["s_true"]
             # false positive s_true=S -> s=I
-            if fpr and (obs["s_true"] == 0) and (np.random.rand() < fpr):
+            if fpr and (obs["s_true"] == 0) and (self.RandomObs.rand() < fpr):
                 obs["s"] = 1
             # false negative s_true=I -> s=S
-            if fnr and (obs["s_true"] == 1) and (np.random.rand() < fnr):
+            if fnr and (obs["s_true"] == 1) and (self.RandomObs.rand() < fnr):
                 obs["s"] = 0
         return list_obs
 
