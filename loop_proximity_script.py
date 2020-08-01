@@ -6,6 +6,7 @@ import pandas as pd
 import argparse
 import sklearn.metrics as mm
 import sys
+sys.path.insert(0,'../sib')
 # sir_inference imports
 from sir_model import FastProximityModel, patient_zeros_states
 from ranking import csr_to_list
@@ -18,6 +19,10 @@ from scenario import Scenario
 from sir_model import EpidemicModel, patient_zeros_states, symptomatic_individuals
 import ranking
 from ranking import RANKINGS
+import sib
+import bp_ranking
+from bp_ranking import bp_ranker_class
+
 
 # READ ARGUMENTS
 parser = argparse.ArgumentParser(description="Run another simulation and don't ask.")
@@ -35,25 +40,27 @@ parser.add_argument('--lamb', type=float, default=0.03, dest="lamb", help='infec
 parser.add_argument('-o', type=int, default=100, dest="num_test_algo", help='number of observations algo')
 parser.add_argument('--outdir', type=str, default="output", dest="out_dir", help='output directory of results')
 parser.add_argument('-i', type=int, default=0, dest="initial_steps", help='initial_steps')
+parser.add_argument('--pai', type=float, default=1e-10, dest="pautoinf", help='auto-infection probability')
 
 parser.add_argument('--or', type=int, default=0, dest="num_test_random", help='number of observations random')
-parser.add_argument('--fss', type=float, default=1, dest="fraction_SS_obs", help='fraction of observed SS')
-parser.add_argument('--fsm', type=float, default=0.3, dest="fraction_SM_obs", help='fraction of observed SM')
-parser.add_argument('--af', type=float, default=1, dest="adoption_fraction", help='adoption fraction')
-#parser.add_argument('--pai', type=float, default=1e-10, dest="pautoinf", help='auto-infection probability')
+parser.add_argument('--fsym', type=float, default=0.5, dest="fraction_sym_obs", help='fraction of observed Symptomatic')
+#parser.add_argument('--af', type=float, default=1, dest="adoption_fraction", help='adoption fraction')
+
+parser.add_argument('--winbp', type=int, default=21, dest="window_bp", help="window_length of bp")
+parser.add_argument('--taubp', type=int, default=7, dest="tau_bp", help="tau bp")
+
+parser.add_argument('--threads', type=int, default=None, dest="num_threads", help='num threads')
+
 #parser.add_argument('--fp_rate', type=float, default=0, dest="fp_rate", help='false positive rate')
 #parser.add_argument('--fn_rate', type=float, default=0, dest="fn_rate", help='false negative rate')
-#parser.add_argument('--window', type=int, default=14, dest="window_length", help="window_length")
-#parser.add_argument('--threads', type=int, default=None, dest="num_threads", help='num threads')
-#parser.add_argument('--smart_users', type = int, default = 0, dest="smartphone_users_abm", help = "smartphone_users_abm")
+
 
 args = parser.parse_args()
 
 
-#if args.num_threads is not None:
-    #sib.set_num_threads(args.num_threads)
-    #print(f"using {args.num_threads} threads")
-# set parameters of the openABM foward simulation
+if args.num_threads is not None:
+    sib.set_num_threads(args.num_threads)
+    print(f"using {args.num_threads} threads")
 
 
 N = args.N
@@ -68,6 +75,11 @@ scale = args.scale
 out_dir = args.out_dir
 initial_steps = args.initial_steps
 num_test_algo = args.num_test_algo
+pautoinf = args.pautoinf
+num_test_random = args.num_test_random
+fraction_sym_obs = args.fraction_sym_obs
+window_bp = args.window_bp
+tau_bp = args.tau_bp
 ########################################################################
 ##################### generate network #################################
 ########################################################################
@@ -143,7 +155,7 @@ p_untracked=0
 ################################################
 
 intervention_options=dict(quarantine_time=T-initial_steps)
-observation_options=dict(n_random=0,n_infected=0,n_ranking=n_ranking, p_symptomatic=0.5, tau=5, p_untracked=p_untracked)
+observation_options=dict(n_random=num_test_random,n_infected=0,n_ranking=n_ranking, p_symptomatic=fraction_sym_obs, tau=5, p_untracked=p_untracked)
 
 ################## MF #############################
 scenario_MF = Scenario(
@@ -153,12 +165,6 @@ scenario_MF = Scenario(
     observation_options=observation_options,
     intervention_options=intervention_options,
 )
-scenario_MF.run(t_max-initial_steps, print_every = 1)
-print("Save MF strategy", flush=True)
-scenario_MF.counts.to_csv(join(out_dir,flag)+ "_MF_res.csv",index=False, sep="\t")
-del scenario_MF
-# 1h01min per round
-print("End seed", flush=True)
 
 
 
@@ -171,14 +177,6 @@ scenario_rnd = Scenario(
     intervention_options=intervention_options
 )
 
-scenario_rnd.run(t_max-initial_steps,  print_every = 1)
-print("Save random strategy", flush=True)
-#scenario_rnd.counts.to_csv("csv/Proximity_N%dK_T%d_s1_ti%d_pz%d_mu%.2f_l%.2f_seed%d_obs%d_rnd.csv"%(N/1000,T,initial_steps,N_patient_zero,mu,lamb,seed,n_ranking),
- #         index=False, sep="\t")
-scenario_rnd.counts.to_csv(join(out_dir,flag)+ "_random_res.csv",index=False, sep="\t")
-del scenario_rnd
-
-
 
 
 ##### TRACING SCENARIO #######
@@ -187,12 +185,79 @@ scenario_trac = Scenario( model, seed=seed+1,
     observation_options=observation_options,
     intervention_options=intervention_options
 )
-scenario_trac.run(t_max-initial_steps, print_every = 1)
-print("Save tracing strategy", flush=True)
+
+
+
+
+
+
+pseed=1e-4
+psus = 0.52
+mu_r = np.log(1 + mu)
+pautoinf = args.pautoinf
+bp_ranker = bp_ranker_class(params = sib.Params(
+                                 prob_r = sib.Exponential(mu=mu_r),
+                                 pseed = pseed,
+                                 psus = psus,
+                                 pautoinf = pautoinf),
+                 maxit0 = 20,
+                 maxit1 = 20,
+                 tol = 1e-3,
+                 memory_decay = 1e-5,
+                 window_length = window_bp,
+                            tau=tau_bp
+                           )
+bp_ranker.init(N, T)
+bp_ranker.__name__ = "bp"
+scenario_bp = Scenario( model, seed=seed, 
+    ranking_options=dict(ranking=bp_ranker.step_scenario),
+    observation_options=observation_options,
+    intervention_options=intervention_options,
+                         save_csv = join(out_dir,flag)+ "_bp_res.csv",
+)
+
+
+
+
+
+scenarios = {
+    "MF":scenario_MF,
+    "tracing":scenario_trac,
+    "random":scenario_rnd,
+    "bp":scenario_bp
+}
+
+
+for s in scenarios.keys():
+    print(f"******************* Running scenario {s} ***********************")
+    scenarios[s].run(t_max-initial_steps,print_every = 50)
+    scenarios[s].counts.to_csv(out_dir + "/" + s + flag + "_res.csv",index=False, sep="\t")
+
+del scenarios
+#    
+#scenario_rnd.run(t_max-initial_steps,  print_every = 1)
+#print("Save random strategy", flush=True)
+#scenario_rnd.counts.to_csv("csv/Proximity_N%dK_T%d_s1_ti%d_pz%d_mu%.2f_l%.2f_seed%d_obs%d_rnd.csv"%(N/1000,T,initial_steps,N_patient_zero,mu,lamb,seed,n_ranking),
+ #         index=False, sep="\t")
+#scenario_rnd.counts.to_csv(join(out_dir,flag)+ "_random_res.csv",index=False, sep="\t")
+#del scenario_rnd
+
+
+#scenario_trac.run(t_max-initial_steps, print_every = 1)
+#print("Save tracing strategy", flush=True)
 #scenario_trac.counts.to_csv("csv/Proximity_N%dK_T%d_s1_ti%d_pz%d_mu%.2f_l%.2f_seed%d_obs%d_trac_t%d.csv"%(N/1000,T,t1,N_patient_zero,mu,lamb,seed,n_ranking,trac_tau),
 #                  index=False, sep="\t")
-scenario_trac.counts.to_csv(join(out_dir,flag)+ "_tracing_res.csv",index=False, sep="\t")
-del scenario_trac
+#scenario_trac.counts.to_csv(join(out_dir,flag)+ "_tracing_res.csv",index=False, sep="\t")
+#del scenario_trac
 
+#scenario_bp.run(t_max-initial_steps, print_every = 1)
+#print("Save bp strategy", flush=True)
+#scenario_bp.counts.to_csv(join(out_dir,flag)+ "_bp_res.csv",index=False, sep="\t")
+#del scenario_bp
 
-
+#scenario_MF.run(t_max-initial_steps, print_every = 1)
+#print("Save MF strategy", flush=True)
+#scenario_MF.counts.to_csv(join(out_dir,flag)+ "_MF_res.csv",index=False, sep="\t")
+#del scenario_MF
+# 1h01min per round
+#print("End seed", flush=True)
