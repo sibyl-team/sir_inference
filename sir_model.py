@@ -326,7 +326,7 @@ class FastProximityModel(EpidemicModel):
 
     You can also provide the initial_states.
     """
-    def __init__(self, N, scale, mu, lamb, initial_states = None):
+    def __init__(self, N, scale, mu, lamb, initial_states = None, seed = 1000):
         self.N = N
         self.scale = scale
         self.mu = mu
@@ -334,9 +334,15 @@ class FastProximityModel(EpidemicModel):
         # initial states : patient zero infected
         if initial_states is None:
             initial_states = patient_zeros_states(N, 1)
+        
+        #### define separate rnd stream (giova)
+        rng = np.random.RandomState()
+        rng.seed(seed)
+        self.rng = rng
+        ####
         # positions
-        x_pos = np.sqrt(N)*np.random.rand(N)
-        y_pos = np.sqrt(N)*np.random.rand(N)
+        x_pos = np.sqrt(N)*rng.random(N)
+        y_pos = np.sqrt(N)*rng.random(N)
         # for soft geometric graph generation
         self.pos  = {i: (x, y) for i, (x, y) in enumerate(zip(x_pos,y_pos))}
         self.radius = 5*scale
@@ -350,7 +356,7 @@ class FastProximityModel(EpidemicModel):
     def sample_contacts(self):
         "contacts = csr sparse matrix of i, j in contact"
         g=nx.soft_random_geometric_graph(
-            self.N, radius=self.radius, p_dist=self.p_dist, pos=self.pos
+            self.N, radius=self.radius, p_dist=self.p_dist, pos=self.pos, seed = self.rng
         )
         contacts = nx.to_scipy_sparse_matrix(g)
         return contacts
