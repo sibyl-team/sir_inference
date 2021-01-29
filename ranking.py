@@ -224,9 +224,11 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     if len(contacts_cut) > 0:
         # (i,j) are both unknown
         print(datetime.datetime.now(), "make contacts_cut2")
-        for i in idx_to_inf:
-            contacts_cut2[i] = contacts[(contacts["i"] == i) \
-                                 & (contacts["j"].isin(idx_to_inf))]
+        #for i in idx_to_inf:
+        #    contacts_cut2[i] = contacts[(contacts["i"] == i) \
+        #                         & (contacts["j"].isin(idx_to_inf))]
+        contacts_cut2 = contacts[(contacts["i"].isin(idx_to_inf)) \
+                                & (contacts["j"].isin(idx_to_inf))]
         print(datetime.datetime.now(), "end contacts_cut2")
     idxk = []
     for i, j, t in contacts_cut[["i", "j", "t"]].to_numpy():
@@ -236,7 +238,8 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
                 Score[i] += lamb + np.random.rand() * noise
                 Count[i] += 1.0
                 # get neighbors k from future contacts (i,k), from the set of the unknown nodes
-                aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
+                #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
+                aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
                 idxk = np.concatenate((idxk, aux), axis = None)
     print(datetime.datetime.now(), "end 1st loop")
     sec_NN = len(idxk)
