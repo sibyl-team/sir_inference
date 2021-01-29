@@ -111,7 +111,7 @@ def ranking_random(t, model, observations, params):
     """
     ranked = np.random.permutation(model.N)
     df = pd.DataFrame({
-        "i":ranked, "rank":range(model.N), "score":np.linspace(1, 0, model.N)
+        "i":ranked, "rank":range(model.N), "score":np.linspace(1, 0, model.N),"count":np.linspace(1, 0, model.N)
     })
     return df
 
@@ -158,6 +158,112 @@ def ranking_tracing(t, model, observations, params):
     encounters["score"] = encounters["count"]
     return encounters
 
+def upd_score(k,Score,lamb,noise):
+    
+    Score[k] += lamb*lamb + np.random.rand() * noise
+
+def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
+    """
+    Contact Tracing up to second nearest neighbors
+    
+    params["tau"] = tau
+    params["lamb"] = lamb
+    
+    Returns: ranked dataframe encounters[["i","rank","score","count"]]
+    Authors: Sibyl-team
+    """
+    
+    from collections import Counter
+    import datetime
+        
+    tau = params["tau"]
+    lamb = params["lamb"]
+    
+    if (T < tau):
+        return ranking_random(T, model, observations, params)
+    
+    observ = pd.DataFrame(observations)
+    observ = observ[(observ["t_test"] <= T)]
+    contacts = pd.DataFrame(
+        dict(i=i, j=j, t=t_contact)
+        for t_contact in range(T - tau, T+1)
+        for i, j, lamb in csr_to_list(model.transmissions[t_contact])
+        if lamb # lamb = 0 does not count
+    )
+    idx_R = observ[observ['s'] == 2]['i'].to_numpy() # observed R
+    idx_I = observ[observ['s'] == 1]['i'].to_numpy() # observed I
+    idx_S = observ[(observ['s'] == 0) & (observ['t_test'] == T)]['i'].to_numpy() # observed S at T -> put them at the tail of the ranking
+    
+    idx_alli = contacts['i'].unique()
+    idx_allj = contacts['j'].unique()
+    idx_all = np.union1d(idx_alli, idx_allj)
+    idx_non_obs = np.setdiff1d(range(0,model.N), idx_all) # these have no contacts -> tail of the ranking
+    
+    idx_to_inf = np.setdiff1d(idx_all, idx_I) # rm I anytime
+    idx_to_inf = np.setdiff1d(idx_to_inf, idx_S) # rm S at time T
+    idx_to_inf = np.setdiff1d(idx_to_inf, idx_R) # rm R anytime
+    
+    maxS = -1 * np.ones(model.N)
+    minR = T * np.ones(model.N)
+    for i, s, t_test, in  observ[["i", "s", "t_test"]].to_numpy():
+        if s == 0 and t_test < T:
+            maxS[i] = max(maxS[i], t_test)
+        if s == 2:
+            minR[i] = min(minR[i], t_test)
+        # I can consider a contact as potentially contagious if T > minR > t_contact > maxS,
+        # the maximum time at which I am observed as S (for both infector and
+        # infected)
+        
+    contacts_cut = contacts[(contacts["i"].isin(idx_to_inf)) \
+                           & (contacts["j"].isin(idx_I))]
+
+    Score = dict([(i, 0) for i in range(model.N)])
+    #Score = manager.dict([(i, 0) for i in range(model.N)])
+    Count = dict([(i, 0) for i in range(model.N)])
+    contacts_cut2 = dict()
+    if len(contacts_cut) > 0:
+        # (i,j) are both unknown
+        print(datetime.datetime.now(), "make contacts_cut2")
+        for i in idx_to_inf:
+            contacts_cut2[i] = contacts[(contacts["i"] == i) \
+                                 & (contacts["j"].isin(idx_to_inf))]
+        print(datetime.datetime.now(), "end contacts_cut2")
+    idxk = []
+    for i, j, t in contacts_cut[["i", "j", "t"]].to_numpy():
+        # i to be estimated, j is infected
+        if t > max(maxS[i], maxS[j]):
+            if t < minR[j]:
+                Score[i] += lamb + np.random.rand() * noise
+                Count[i] += 1.0
+                # get neighbors k from future contacts (i,k), from the set of the unknown nodes
+                aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
+                idxk = np.concatenate((idxk, aux), axis = None)
+    print(datetime.datetime.now(), "end 1st loop")
+    sec_NN = len(idxk)
+    value_occ = Counter(idxk).items()
+    
+    for (k, occk) in value_occ:
+        Score[k] += lamb*lamb*occk 
+    print(datetime.datetime.now(), "end 2nd loop")
+
+    print(f"first NN c: {len(contacts_cut)}. second NN c: {sec_NN}")
+    
+    for i in range(0,model.N):
+        if i in idx_non_obs:
+            Score[i] = -1 + np.random.rand() * noise
+        if i in idx_I and i not in idx_R:
+            Score[i] = model.N * observ[(observ['i'] == i) & (observ['s'] == 1)]['t_test'].max() + np.random.rand() * noise
+        elif i in idx_S: #at time T
+            Score[i] = -1 + np.random.rand() * noise
+        elif i in idx_R: #anytime
+            Score[i] = -1 + np.random.rand() * noise
+    sorted_Score = sorted(Score.items(),key=lambda item: item[1], reverse=True)
+    idxrank = [item[0] for item in sorted_Score]
+    scores = [item[1] for item in sorted_Score]
+    count = [Count[i] for i in idxrank] 
+    #i rank score count
+    encounters = pd.DataFrame({"i": list(idxrank), "rank": range(0,model.N), "score": list(scores), "count": count })
+    return encounters
 
 def ranking_tracing_backtrack(t, model, observations, params):
     """Naive contact tracing + backtrack
@@ -196,10 +302,14 @@ def ranking_tracing_backtrack(t, model, observations, params):
     return df
 
 
+
+
+
 RANKINGS = {
     "tracing_backtrack": ranking_tracing_backtrack,
     "inference": ranking_inference,
     "backtrack": ranking_backtrack,
     "tracing": ranking_tracing,
-    "random": ranking_random
+    "random": ranking_random,
+    "tracing2nd": ranking_tracing_secnn
 }
