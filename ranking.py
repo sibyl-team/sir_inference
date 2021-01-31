@@ -163,6 +163,11 @@ def upd_score(k,Score,lamb,noise):
     
     Score[k] += lamb*lamb + np.random.rand() * noise
 
+def get_nonzero_idx_d(x):
+    idx = x.tocoo().nonzero()
+    y = x.tocsr()
+    return *idx, np.array(y[idx])
+
 def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     """
     Contact Tracing up to second nearest neighbors
@@ -188,7 +193,7 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     observ = pd.DataFrame(observations)
     print("t setup observ {:.3f} ms".format((time.time()-t0)*1000))
 
-    if T - tau > tau:
+    if T - tau > T:
         ## save data
         print("SAVING")
         with gzip.open("transmissions_csr_gr.pk.gz","w") as f:
@@ -198,12 +203,12 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
 
     t0 = time.time()
     observ = observ[(observ["t_test"] <= T)]
-    contacts = pd.DataFrame(
-        dict(i=i, j=j, t=t_contact)
-        for t_contact in range(T - tau, T+1)
-        for i, j, lamb in csr_to_list(model.transmissions[t_contact])
-        if lamb # lamb = 0 does not count
-    )
+    temp =[]
+    for t_contact in range(T-tau, T+1):
+        d = get_nonzero_idx_d(model.transmissions[t_contact])
+        temp.append(pd.DataFrame(dict(i=d[0],j=d[1],t=t_contact)))
+    contacts = pd.concat(temp, ignore_index=True)
+
     print("t setup contacts {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
     idx_R = observ[observ['s'] == 2]['i'].to_numpy() # observed R
