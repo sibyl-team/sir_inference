@@ -175,6 +175,7 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     """
     
     from collections import Counter
+    import pickle, gzip
     
         
     tau = params["tau"]
@@ -182,9 +183,19 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     
     if (T < tau):
         return ranking_random(T, model, observations, params)
+
     t0 = time.time()
     observ = pd.DataFrame(observations)
     print("t setup observ {:.3f} ms".format((time.time()-t0)*1000))
+
+    if T - tau > tau:
+        ## save data
+        print("SAVING")
+        with gzip.open("transmissions_csr_gr.pk.gz","w") as f:
+            pickle.dump(model.transmissions,f,protocol=4)
+        observ.to_feather("observ.fth")
+        print(T, model.N, params)
+
     t0 = time.time()
     observ = observ[(observ["t_test"] <= T)]
     contacts = pd.DataFrame(
