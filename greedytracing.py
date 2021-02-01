@@ -2,8 +2,32 @@
 import time
 import numpy as np
 import pandas as pd
+import numba as nb
 
 from ranking import ranking_random, get_nonzero_idx_d
+
+def _set_ranking(contacts_cut, contacts_c2, N, lamb, noise, maxS, minR):
+    idxk = []
+    #c2_i = contacts_c2[:,0]
+    #c2_t = contacts_c2[:,2]
+    scores = np.zeros(N)
+    counts = np.zeros(N)
+    for i, j, t in contacts_cut:
+        # i to be estimated, j is infected
+        if t > max(maxS[i], maxS[j]):
+            if t < minR[j]:
+                scores[i] += lamb + np.random.rand() * noise
+                counts[i] += 1.0
+                # get neighbors k from future contacts (i,k), from the set of the unknown nodes
+                # column 0 is i, column 1 is j, column 2 is t
+                midx = (contacts_c2[:,0] == i) & (contacts_c2[:,2] > max(t, maxS[i]))
+                aux = contacts_c2[midx][:,1]
+                idxk.append(aux)
+
+    out_res = np.concatenate(idxk, axis=None)
+    return scores, counts, out_res
+
+
 
 def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     """
@@ -80,9 +104,9 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     contacts_cut = contacts[(contacts["i"].isin(idx_to_inf)) \
                            & (contacts["j"].isin(idx_I))]
 
-    Score = dict([(i, 0) for i in range(model.N)])
+    #Score = dict([(i, 0) for i in range(model.N)])
     #Score = manager.dict([(i, 0) for i in range(model.N)])
-    Count = dict([(i, 0) for i in range(model.N)])
+    #Count = dict([(i, 0) for i in range(model.N)])
     contacts_cut2 = dict()
     if len(contacts_cut) > 0:
         # (i,j) are both unknown
@@ -95,26 +119,21 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
         #print(datetime.datetime.now(), "end contacts_cut2")
     print("t contacts cut: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
-    idxk = []
-    
-    for i, j, t in contacts_cut[["i", "j", "t"]].to_numpy():
-        # i to be estimated, j is infected
-        if t > max(maxS[i], maxS[j]):
-            if t < minR[j]:
-                Score[i] += lamb + np.random.rand() * noise
-                Count[i] += 1.0
-                # get neighbors k from future contacts (i,k), from the set of the unknown nodes
-                #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-                aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-                idxk = np.concatenate((idxk, aux), axis = None)
-    print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
-    t0 = time.time()
+    c_cut = contacts_cut[["i", "j", "t"]].to_numpy()
+    c_cut2=contacts_cut2[["i", "j", "t"]].to_numpy()
+    #print(c_cut2)
+    Score, Count, idxk = _set_ranking(c_cut, c_cut2, model.N, lamb, noise, maxS, minR)
+    #Score = pd.Series(Score)
+    #print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
+    #t0 = time.time()
+    #np.save("idxk_new",idxk)
     sec_NN = len(idxk)
     value_occ = Counter(idxk).items()
     
     for (k, occk) in value_occ:
         Score[k] += lamb*lamb*occk 
-    print("t second loop: {:.3f} ms".format((time.time()-t0)*1000))
+    
+    print("t contacts loop: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
 
     print(f"first NN c: {len(contacts_cut)}. second NN c: {sec_NN}")
@@ -129,13 +148,19 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
         elif i in idx_R: #anytime
             Score[i] = -1 + np.random.rand() * noise
     print("t final loop: {:.3f} ms".format((time.time()-t0)*1000))
+    #print("Score: ", Score[:50])
     t0 = time.time()
-    sorted_Score = sorted(Score.items(),key=lambda item: item[1], reverse=True)
-    idxrank = [item[0] for item in sorted_Score]
-    scores = [item[1] for item in sorted_Score]
-    count = [Count[i] for i in idxrank] 
+    #sorted_Score = #sorted(Score.items(),key=lambda item: item[1], reverse=True)
+    idxrank = np.argsort(Score)[::-1]
+    scores = Score[idxrank]
+    count = Count[idxrank]
+    #print("Scoreidx: ", idxrank[:50])
+    #idxrank = [item[0] for item in sorted_Score]
+    #scores = [item[1] for item in sorted_Score]
+    #count = [Count[i] for i in idxrank] 
 
     #i rank score count
-    encounters = pd.DataFrame({"i": list(idxrank), "rank": range(0,model.N), "score": list(scores), "count": count })
+    
+    encounters = pd.DataFrame({"i": idxrank, "rank": range(0,model.N), "score": scores, "count": count })
     print("t set output: {:.3f} ms".format((time.time()-t0)*1000))
     return encounters

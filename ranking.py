@@ -267,16 +267,17 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
                 Count[i] += 1.0
                 # get neighbors k from future contacts (i,k), from the set of the unknown nodes
                 #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-                aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
+                aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]) )]["j"].to_numpy()
                 idxk = np.concatenate((idxk, aux), axis = None)
-    print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
-    t0 = time.time()
+    #print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
+    #t0 = time.time()
+    #np.save("idxk_old",idxk)
     sec_NN = len(idxk)
     value_occ = Counter(idxk).items()
     
     for (k, occk) in value_occ:
-        Score[k] += lamb*lamb*occk 
-    print("t second loop: {:.3f} ms".format((time.time()-t0)*1000))
+        Score[k] += lamb*lamb*occk
+    print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
 
     print(f"first NN c: {len(contacts_cut)}. second NN c: {sec_NN}")
@@ -291,10 +292,12 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
         elif i in idx_R: #anytime
             Score[i] = -1 + np.random.rand() * noise
     print("t final loop: {:.3f} ms".format((time.time()-t0)*1000))
+    #print("Score; ", np.array([Score[v] for v in range(50)]))
     t0 = time.time()
     sorted_Score = sorted(Score.items(),key=lambda item: item[1], reverse=True)
     idxrank = [item[0] for item in sorted_Score]
     scores = [item[1] for item in sorted_Score]
+    #print("Score idx: ", np.array([idxrank[v] for v in range(50)]))
     count = [Count[i] for i in idxrank] 
 
     #i rank score count
