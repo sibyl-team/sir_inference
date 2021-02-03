@@ -3,6 +3,7 @@ import time
 import numpy as np
 import pandas as pd
 import numba as nb
+import scipy.sparse as sparse
 
 from ranking import ranking_random, get_nonzero_idx_d
 
@@ -39,7 +40,7 @@ def count_valid_c1(alli, allj, allt, maxS, minR):
     Count valid contacts, given i, j, and t
     """
     res = np.zeros(alli.shape[0], dtype=np.bool_)
-    for l in nb.prange(alli.shape[0]):
+    for l in range(alli.shape[0]):
         i = alli[l]
         j = allj[l]
         t = allt[l]
@@ -48,6 +49,23 @@ def count_valid_c1(alli, allj, allt, maxS, minR):
                 res[l] = True
 
     return res
+
+def create_mat_c2(contacts_cut2, model):
+    mat = []
+    times =[]
+    c2t = contacts_cut2.sort_values("t", ascending=False)
+
+    for t, gr in c2t.groupby("t",sort=False):
+        v = sparse.coo_matrix((np.ones(len(gr),np.int), (gr.i.to_numpy(), gr.j.to_numpy())), shape=(model.N, model.N))
+        if len(mat)> 1:
+            mat.append(v.tocsr()+mat[-1])
+        else:
+            mat.append(v.tocsr())
+        times.append(t)
+        print(f"Appeding contacts, t={t}")
+
+    mat_c2= dict(zip(times, mat))
+    return mat_c2
 
 def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     """
@@ -139,32 +157,39 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     valid_c1 = count_valid_c1(*[contacts_cut[k].to_numpy() for k in ("i","j","t")], maxS, minR)
     valid_contacts_c1 = contacts_cut.iloc[valid_c1]
     t1 = time.time()-t0
-    idxk = []
     for i, j, t in valid_contacts_c1[["i", "j", "t"]].to_numpy():
         # i to be estimated, j is infected
-        if t > max(maxS[i], maxS[j]):
-            if t < minR[j]:
-                Score[i] += lamb + np.random.rand() * noise
-                Count[i] += 1.0
-                # get neighbors k from future contacts (i,k), from the set of the unknown nodes
-                #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-                aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]) )]["j"].to_numpy()
-                idxk = np.concatenate((idxk, aux), axis = None).astype(np.int32)
+       
+        Score[i] += lamb + np.random.rand() * noise
+        Count[i] += 1.0
+
+    mat_c1 = {}
+    for t, gr in valid_contacts_c1.groupby("t"):
+        v = sparse.coo_matrix((np.ones(len(gr),np.int), (gr.i.to_numpy(), gr.j.to_numpy())), shape=(model.N, model.N))
+        mat_c1[t] = v.tocsr()
+
+    mat_c2 = create_mat_c2(contacts_cut2, model)
+    
     t2 = time.time()-t0
     t0 = time.time()
-    #idxk = np.concatenate(allidx, axis=None)
-    #Score = pd.Series(Score)
-    #print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
-    #t0 = time.time()
-    #np.save("idxk_new",idxk)
+    sum_counts = None
+    for t, m in mat_c1.items():
+        res = mat_c2[t][m.nonzero()[0]].sum(0)
+        if sum_counts is None:
+            sum_counts=res
+        else:
+            sum_counts+=res
+
     t3 = time.time() -t0
     t0 = time.time()
-    sec_NN = len(idxk)
-    value_occ = Counter(idxk).items()
+    sec_NN = sum_counts.sum()
+    sum_counts = np.array(sum_counts)[0]
+    idx_nonzero_j = sum_counts.nonzero()[0]
+    counts_j = sum_counts[idx_nonzero_j]
     t4 = time.time() - t0
     t0 = time.time()
     
-    for (k, occk) in value_occ:
+    for (k, occk) in zip(idx_nonzero_j, counts_j):
         Score[k] += lamb*lamb*occk 
     tf = time.time() -t0
     times = np.array(tuple((t1,t2,t3,t4,tf)))
