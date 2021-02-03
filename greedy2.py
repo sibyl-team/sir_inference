@@ -1,6 +1,7 @@
 import time
 import numpy as np
 import pandas as pd
+import numba as nb
 from inference_model import MeanField, DynamicMessagePassing
 from sir_model import frequency, indicator
 import sib
@@ -19,6 +20,22 @@ def get_nonzero_idx_d(x):
     idx = x.tocoo().nonzero()
     y = x.tocsr()
     return *idx, np.array(y[idx])
+
+@nb.njit()
+def count_valid_c1(alli, allj, allt, maxS, minR):
+    """
+    Count valid contacts, given i, j, and t
+    """
+    res = np.zeros(alli.shape[0], dtype=np.bool_)
+    for l in range(alli.shape[0]):
+        i = alli[l]
+        j = allj[l]
+        t = allt[l]
+        if t > max(maxS[i], maxS[j]):
+            if t < minR[j]:
+                res[l] = True
+
+    return res
 
 def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=False):
     """
@@ -104,26 +121,24 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
     if len(contacts_cut) > 0:
         # (i,j) are both unknown
         #print(datetime.datetime.now(), "make contacts_cut2")
-        #for i in idx_to_inf:
-        #    contacts_cut2[i] = contacts[(contacts["i"] == i) \
-        #                         & (contacts["j"].isin(idx_to_inf))]
         contacts_cut2 = contacts[(contacts["i"].isin(idx_to_inf)) \
                                 & (contacts["j"].isin(idx_to_inf))]
         #print(datetime.datetime.now(), "end contacts_cut2")
+
+    valid_idx_c1 = count_valid_c1(*[contacts_cut[k].to_numpy() for k in ("i","j","t")], maxS, minR)
+    good_c1 = contacts_cut[valid_idx_c1]
     if timing:
         print("t contacts cut: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
     idxk = []
-    for i, j, t in contacts_cut[["i", "j", "t"]].to_numpy():
+    for i, j, t in good_c1[["i", "j", "t"]].to_numpy():
         # i to be estimated, j is infected
-        if t > max(maxS[i], maxS[j]):
-            if t < minR[j]:
-                Score[i] += lamb + np.random.rand() * noise
-                Count[i] += 1.0
-                # get neighbors k from future contacts (i,k), from the set of the unknown nodes
-                #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-                aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]) )]["j"].to_numpy()
-                idxk = np.concatenate((idxk, aux), axis = None)
+        Score[i] += lamb + np.random.rand() * noise
+        Count[i] += 1.0
+        # get neighbors k from future contacts (i,k), from the set of the unknown nodes
+        #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
+        aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]) )]["j"].to_numpy()
+        idxk = np.concatenate((idxk, aux), axis = None)
     #print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
     #t0 = time.time()
     #np.save("idxk_old",idxk)
@@ -161,52 +176,3 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
     encounters = pd.DataFrame({"i": list(idxrank), "rank": range(0,model.N), "score": list(scores), "count": count })
     if timing: print("t set output: {:.3f} ms".format((time.time()-t0)*1000))
     return encounters
-
-def ranking_tracing_backtrack(t, model, observations, params):
-    """Naive contact tracing + backtrack
-
-    First rank according to contact tracing (past contact or not), then by
-    the MF/DMP probas.
-
-    params["delta"] : delta
-    params["tau"] : tau
-    params["algo"] : "MF" (Mean Field) or "DMP" (Dynamic Message Passing)
-    params["init"] : "all_S" (all susceptible) or "freqs" (frequency at t_start)
-
-    Returns: ranked dataframe df[["i","rank","score","count","p_I","p_R","p_S"]]
-    If t < t_start or t < tau cannot do the tracing + backtrack ranking,
-    returns a random ranking.
-    """
-    tau = params["tau"]
-    if (t < tau):
-        return ranking_random(t, model, observations, params)
-    delta = params["delta"]
-    if (t < delta):
-        return ranking_random(t, model, observations, params)
-    encounters = ranking_tracing(t, model, observations, params)
-    encounters.drop(columns=["rank","score"], inplace=True)
-    probas = ranking_backtrack(t, model, observations, params)
-    probas.drop(columns=["rank","score"], inplace=True)
-    df = pd.merge(encounters, probas, on=["i"], how="inner")
-    df["past_contact"] = 1*(df["count"] > 0)
-    df["score"] = df["past_contact"] + df["p_I"]
-    # some i will have the same score
-    # -> we add a random value to shuffle the ranking
-    df["rand"] = np.random.rand(model.N)
-    df = df.sort_values(by=["score", "rand"], ascending=False)
-    df.reset_index(drop=True, inplace=True)
-    df["rank"] = range(model.N)
-    return df
-
-
-
-
-
-RANKINGS = {
-    "tracing_backtrack": ranking_tracing_backtrack,
-    "inference": ranking_inference,
-    "backtrack": ranking_backtrack,
-    "tracing": ranking_tracing,
-    "random": ranking_random,
-    "tracing2nd": ranking_tracing_secnn
-}
