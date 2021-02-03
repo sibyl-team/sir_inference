@@ -39,7 +39,7 @@ def count_valid_c1(alli, allj, allt, maxS, minR):
 
     return res
 
-def create_mat_c2(contacts_cut2, model):
+def create_mat_c2(contacts_cut2, model, debug=False):
     mat = []
     times =[]
     c2t = contacts_cut2.sort_values("t", ascending=False)
@@ -51,7 +51,7 @@ def create_mat_c2(contacts_cut2, model):
         else:
             mat.append(v.tocsr())
         times.append(t)
-        print(f"Appeding contacts, t={t}")
+        if debug: print(f"Appeding contacts, t={t}")
 
     mat_c2= dict(zip(times, mat))
     return mat_c2
@@ -133,9 +133,9 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
     contacts_cut = contacts[(contacts["i"].isin(idx_to_inf)) \
                            & (contacts["j"].isin(idx_I))]
 
-    Score = dict([(i, 0) for i in range(model.N)])
+    Score = np.zeros(model.N)#dict([(i, 0) for i in range(model.N)])
     #Score = manager.dict([(i, 0) for i in range(model.N)])
-    Count = dict([(i, 0) for i in range(model.N)])
+    Count = np.zeros(model.N)#dict([(i, 0) for i in range(model.N)])
     contacts_cut2 = dict()
     if len(contacts_cut) > 0:
         # (i,j) are both unknown
@@ -170,7 +170,7 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
         ## I have n_i rows 
         idx_i_c1= np.unique(mat_c1[t].nonzero()[0])      
         res = mat_c1[t][idx_i_c1,:].sum(1).T * mat_c2[t+1][idx_i_c1,:] ##vector product
-        print(res.shape)
+        #print(res.shape)
         if sum_counts is None:
             sum_counts=res
         else:
@@ -181,8 +181,9 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
     idx_nonzero_j = sum_counts.nonzero()[0]
     counts_j = sum_counts[idx_nonzero_j]
 
-    for (k, occk) in zip(idx_nonzero_j, counts_j):
-        Score[k] += lamb*lamb*occk 
+    #for (k, occk) in zip(idx_nonzero_j, counts_j):
+    #    Score[k] += lamb*lamb*occk
+    Score[idx_nonzero_j] += (lamb**2 * counts_j)
     
     if timing:
         print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
@@ -203,13 +204,16 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
         print("t final loop: {:.3f} ms".format((time.time()-t0)*1000))
     #print("Score; ", np.array([Score[v] for v in range(50)]))
     t0 = time.time()
-    sorted_Score = sorted(Score.items(),key=lambda item: item[1], reverse=True)
-    idxrank = [item[0] for item in sorted_Score]
-    scores = [item[1] for item in sorted_Score]
+    #sorted_Score = sorted(Score.items(),key=lambda item: item[1], reverse=True)
+    #idxrank = [item[0] for item in sorted_Score]
+    #scores = [item[1] for item in sorted_Score]
     #print("Score idx: ", np.array([idxrank[v] for v in range(50)]))
-    count = [Count[i] for i in idxrank] 
+    #count = [Count[i] for i in idxrank] 
+    idxrank = np.argsort(Score)[::-1]
+    scores = Score[idxrank]
+    count = Count[idxrank]
 
     #i rank score count
-    encounters = pd.DataFrame({"i": list(idxrank), "rank": range(0,model.N), "score": list(scores), "count": count })
+    encounters = pd.DataFrame({"i": idxrank, "rank": range(0,model.N), "score": scores, "count": count })
     if timing: print("t set output: {:.3f} ms".format((time.time()-t0)*1000))
     return encounters
