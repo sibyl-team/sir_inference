@@ -2,8 +2,10 @@ import time
 import numpy as np
 import pandas as pd
 import numba as nb
+import scipy.sparse as sparse
 from inference_model import MeanField, DynamicMessagePassing
 from sir_model import frequency, indicator
+from ranking import ranking_random
 import sib
 
 
@@ -36,6 +38,23 @@ def count_valid_c1(alli, allj, allt, maxS, minR):
                 res[l] = True
 
     return res
+
+def create_mat_c2(contacts_cut2, model):
+    mat = []
+    times =[]
+    c2t = contacts_cut2.sort_values("t", ascending=False)
+
+    for t, gr in c2t.groupby("t",sort=False):
+        v = sparse.coo_matrix((np.ones(len(gr),np.int), (gr.i.to_numpy(), gr.j.to_numpy())), shape=(model.N, model.N))
+        if len(mat)> 0:
+            mat.append(v.tocsr()+mat[-1])
+        else:
+            mat.append(v.tocsr())
+        times.append(t)
+        print(f"Appeding contacts, t={t}")
+
+    mat_c2= dict(zip(times, mat))
+    return mat_c2
 
 def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=False):
     """
@@ -126,27 +145,45 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
         #print(datetime.datetime.now(), "end contacts_cut2")
 
     valid_idx_c1 = count_valid_c1(*[contacts_cut[k].to_numpy() for k in ("i","j","t")], maxS, minR)
-    good_c1 = contacts_cut[valid_idx_c1]
+    good_c1 = contacts_cut.iloc[valid_idx_c1]
     if timing:
         print("t contacts cut: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
-    idxk = []
     for i, j, t in good_c1[["i", "j", "t"]].to_numpy():
         # i to be estimated, j is infected
         Score[i] += lamb + np.random.rand() * noise
         Count[i] += 1.0
         # get neighbors k from future contacts (i,k), from the set of the unknown nodes
         #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-        aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]) )]["j"].to_numpy()
-        idxk = np.concatenate((idxk, aux), axis = None)
     #print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
     #t0 = time.time()
     #np.save("idxk_old",idxk)
-    sec_NN = len(idxk)
-    value_occ = Counter(idxk).items()
+    mat_c1 = {}
+    for t, gr in good_c1.groupby("t"):
+        v = sparse.coo_matrix((np.ones(len(gr),np.int), (gr.i.to_numpy(), gr.j.to_numpy())), shape=(model.N, model.N))
+        mat_c1[t] = v.tocsr()
+
+    mat_c2 = create_mat_c2(contacts_cut2, model)
+    sum_counts = None
+    for t in sorted(mat_c1.keys()):
+        ## select the rows (i) where the num is 0
+        ## I have n_i rows 
+        idx_i_c1= np.unique(mat_c1[t].nonzero()[0])      
+        res = mat_c1[t][idx_i_c1,:].sum(1).T * mat_c2[t+1][idx_i_c1,:] ##vector product
+        print(res.shape)
+        if sum_counts is None:
+            sum_counts=res
+        else:
+            sum_counts+=res
+
+    sec_NN = sum_counts.sum()
+    sum_counts = np.array(sum_counts)[0]
+    idx_nonzero_j = sum_counts.nonzero()[0]
+    counts_j = sum_counts[idx_nonzero_j]
+
+    for (k, occk) in zip(idx_nonzero_j, counts_j):
+        Score[k] += lamb*lamb*occk 
     
-    for (k, occk) in value_occ:
-        Score[k] += lamb*lamb*occk
     if timing:
         print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()

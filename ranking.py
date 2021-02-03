@@ -168,7 +168,7 @@ def get_nonzero_idx_d(x):
     y = x.tocsr()
     return *idx, np.array(y[idx])
 
-def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
+def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=False):
     """
     Contact Tracing up to second nearest neighbors
     
@@ -191,9 +191,10 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
 
     t0 = time.time()
     observ = pd.DataFrame(observations)
-    print("t setup observ {:.3f} ms".format((time.time()-t0)*1000))
+    if timing:
+        print("t setup observ {:.3f} ms".format((time.time()-t0)*1000))
 
-    if T - tau > T:
+    if T == -1:
         ## save data
         print("SAVING")
         with gzip.open("transmissions_csr_gr.pk.gz","w") as f:
@@ -208,8 +209,8 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
         d = get_nonzero_idx_d(model.transmissions[t_contact])
         temp.append(pd.DataFrame(dict(i=d[0],j=d[1],t=t_contact)))
     contacts = pd.concat(temp, ignore_index=True)
-
-    print("t setup contacts {:.3f} ms".format((time.time()-t0)*1000))
+    if timing:
+        print("t setup contacts {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
     idx_R = observ[observ['s'] == 2]['i'].to_numpy() # observed R
     idx_I = observ[observ['s'] == 1]['i'].to_numpy() # observed I
@@ -223,7 +224,8 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     idx_to_inf = np.setdiff1d(idx_all, idx_I) # rm I anytime
     idx_to_inf = np.setdiff1d(idx_to_inf, idx_S) # rm S at time T
     idx_to_inf = np.setdiff1d(idx_to_inf, idx_R) # rm R anytime
-    print("t setup idx {:.3f} ms".format((time.time()-t0)*1000))
+    if timing:
+        print("t setup idx {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
     
     maxS = -1 * np.ones(model.N)
@@ -236,8 +238,8 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
         # I can consider a contact as potentially contagious if T > minR > t_contact > maxS,
         # the maximum time at which I am observed as S (for both infector and
         # infected)
-    
-    print("t first loop: {:.3f} ms".format((time.time()-t0)*1000))
+    if timing:
+        print("t first loop: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
         
     contacts_cut = contacts[(contacts["i"].isin(idx_to_inf)) \
@@ -256,7 +258,8 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
         contacts_cut2 = contacts[(contacts["i"].isin(idx_to_inf)) \
                                 & (contacts["j"].isin(idx_to_inf))]
         #print(datetime.datetime.now(), "end contacts_cut2")
-    print("t contacts cut: {:.3f} ms".format((time.time()-t0)*1000))
+    if timing:
+        print("t contacts cut: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
     idxk = []
     for i, j, t in contacts_cut[["i", "j", "t"]].to_numpy():
@@ -267,8 +270,10 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
                 Count[i] += 1.0
                 # get neighbors k from future contacts (i,k), from the set of the unknown nodes
                 #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-                aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]) )]["j"].to_numpy()
-                idxk = np.concatenate((idxk, aux), axis = None)
+                sel_c2 = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]) )]
+                aux = sel_c2["j"].to_numpy()
+                #print(aux)
+                idxk = np.concatenate((idxk, aux), axis = None).astype(int)
     #print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
     #t0 = time.time()
     #np.save("idxk_old",idxk)
@@ -277,7 +282,8 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     
     for (k, occk) in value_occ:
         Score[k] += lamb*lamb*occk
-    print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
+    if timing:
+        print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
 
     print(f"first NN c: {len(contacts_cut)}. second NN c: {sec_NN}")
@@ -291,7 +297,8 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
             Score[i] = -1 + np.random.rand() * noise
         elif i in idx_R: #anytime
             Score[i] = -1 + np.random.rand() * noise
-    print("t final loop: {:.3f} ms".format((time.time()-t0)*1000))
+    if timing:
+        print("t final loop: {:.3f} ms".format((time.time()-t0)*1000))
     #print("Score; ", np.array([Score[v] for v in range(50)]))
     t0 = time.time()
     sorted_Score = sorted(Score.items(),key=lambda item: item[1], reverse=True)
@@ -302,7 +309,7 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
 
     #i rank score count
     encounters = pd.DataFrame({"i": list(idxrank), "rank": range(0,model.N), "score": list(scores), "count": count })
-    print("t set output: {:.3f} ms".format((time.time()-t0)*1000))
+    if timing: print("t set output: {:.3f} ms".format((time.time()-t0)*1000))
     return encounters
 
 def ranking_tracing_backtrack(t, model, observations, params):
