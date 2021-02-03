@@ -124,11 +124,18 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
     
     maxS = -1 * np.ones(model.N)
     minR = T * np.ones(model.N)
+    inf_maxt = {}
     for i, s, t_test, in  observ[["i", "s", "t_test"]].to_numpy():
         if s == 0 and t_test < T:
             maxS[i] = max(maxS[i], t_test)
-        if s == 2:
+        elif s == 2:
             minR[i] = min(minR[i], t_test)
+        elif s == 1:
+            if i in inf_maxt:
+                inf_maxt[i] = max(t_test, inf_maxt[i])
+            else:
+                inf_maxt[i] = t_test
+        
         # I can consider a contact as potentially contagious if T > minR > t_contact > maxS,
         # the maximum time at which I am observed as S (for both infector and
         # infected)
@@ -198,15 +205,24 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
 
     print(f"first NN c: {len(contacts_cut)}. second NN c: {sec_NN}")
     
-    for i in range(0,model.N):
-        if i in idx_non_obs:
-            Score[i] = -1 + np.random.rand() * noise
-        if i in idx_I and i not in idx_R:
-            Score[i] = model.N * observ[(observ['i'] == i) & (observ['s'] == 1)]['t_test'].max() + np.random.rand() * noise
-        elif i in idx_S: #at time T
-            Score[i] = -1 + np.random.rand() * noise
-        elif i in idx_R: #anytime
-            Score[i] = -1 + np.random.rand() * noise
+    Score[idx_non_obs] = -1 + np.random.rand(len(idx_non_obs)) * noise
+    isI_notR = np.setdiff1d(idx_I, idx_R)
+    for i in isI_notR:
+        #if i in idx_non_obs:
+        #    Score[i] = -1 + np.random.rand() * noise
+        #if i in idx_I and i not in idx_R:
+        #    #maxt = observ[(observ['i'] == i) & (observ['s'] == 1)]['t_test'].max()
+        #    #assert maxt == maxS[i]
+        Score[i] = model.N * inf_maxt[i] + np.random.rand() * noise
+        #elif i in idx_S: #at time T
+        #    Score[i] = -1 + np.random.rand() * noise
+        #elif i in idx_R: #anytime
+        #    Score[i] = -1 + np.random.rand() * noise
+        #raise InterruptedError
+    #allidcs = np.arange(model.N)
+    
+    Score[idx_S] = -1 + np.random.rand(len(idx_S)) * noise
+    Score[idx_R] = -1 + np.random.rand(len(idx_R)) * noise
     if timing:
         print("t final loop: {:.3f} ms".format((time.time()-t0)*1000))
     #print("Score; ", np.array([Score[v] for v in range(50)]))
