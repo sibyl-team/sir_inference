@@ -39,6 +39,12 @@ def count_valid_c1(alli, allj, allt, maxS, minR):
 
     return res
 
+@nb.njit()
+def sum_score_c1(scores, rands, column_i, lamb, noise):
+    for l in range(column_i.shape[0]):
+        i = column_i[l]
+        scores[i] += lamb + rands[l] * noise
+
 def create_mat_c2(contacts_cut2, model, debug=False):
     mat = []
     times =[]
@@ -149,15 +155,16 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
     if timing:
         print("t contacts cut: {:.3f} ms".format((time.time()-t0)*1000))
     t0 = time.time()
-    for i, j, t in good_c1[["i", "j", "t"]].to_numpy():
-        # i to be estimated, j is infected
-        Score[i] += lamb + np.random.rand() * noise
-        Count[i] += 1.0
-        # get neighbors k from future contacts (i,k), from the set of the unknown nodes
-        #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
+    idxi_counts, icounts = np.unique(good_c1["i"], return_counts=True)
+
     #print("t loop contacts: {:.3f} ms".format((time.time()-t0)*1000))
     #t0 = time.time()
     #np.save("idxk_old",idxk)
+    Count[idxi_counts] += icounts
+    mrands = np.random.rand(len(good_c1))
+
+    sum_score_c1(Score, mrands, good_c1["i"].to_numpy(), lamb, noise)
+
     mat_c1 = {}
     for t, gr in good_c1.groupby("t"):
         v = sparse.coo_matrix((np.ones(len(gr),np.int), (gr.i.to_numpy(), gr.j.to_numpy())), shape=(model.N, model.N))
@@ -204,13 +211,9 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19, timing=
         print("t final loop: {:.3f} ms".format((time.time()-t0)*1000))
     #print("Score; ", np.array([Score[v] for v in range(50)]))
     t0 = time.time()
-    #sorted_Score = sorted(Score.items(),key=lambda item: item[1], reverse=True)
-    #idxrank = [item[0] for item in sorted_Score]
-    #scores = [item[1] for item in sorted_Score]
-    #print("Score idx: ", np.array([idxrank[v] for v in range(50)]))
-    #count = [Count[i] for i in idxrank] 
-    idxrank = np.argsort(Score)[::-1]
-    scores = Score[idxrank]
+
+    idxrank = np.argsort(Score)[::-1] ## reverse sort the scores (higher to lower)
+    scores = Score[idxrank] ## get the scores
     count = Count[idxrank]
 
     #i rank score count
