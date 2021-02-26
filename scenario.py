@@ -75,7 +75,25 @@ def get_obs_counts(observations):
     }
     return obs_count
 
+def get_contacts_ranked(transmissions, observations, T, tau=5):
+    
+    observ = pd.DataFrame(observations)
+    pos_rank_obs_t = observ[(observ['s']==1) & (observ['source']=="ranking") & (observ['t_test']==T)]["i"].to_numpy() # tested pos from ranking at T
+    rank_obs_t = observ[(observ['source']=="ranking") & (observ['t_test']==T)]["i"].to_numpy() # ranked at T
+    contacts = pd.DataFrame(
+        dict(i=i, j=j, t=t_contact)
+        for t_contact in range(T - tau, T+1)
+        for i, j, lamb in csr_to_list(transmissions[t_contact])
+        if lamb # lamb = 0 does not count
+    )
+    idx_I = observ[(observ['s'] == 1) & (observ['t_test'] < T) & (observ['t_test'] >= T-tau) ]['i'].to_numpy() # observed I
+    contacts_cut = contacts[(contacts["i"].isin(rank_obs_t)) \
+                           & (contacts["j"].isin(idx_I))]   
+    return len(pos_rank_obs_t), len(contacts_cut)/len(rank_obs_t)
 
+
+    
+    
 class Scenario():
 
     def __init__(self, model, seed,
@@ -91,6 +109,7 @@ class Scenario():
         self.initial_states = model.initial_states
         self.recover_probas = model.recover_probas
         self.base_transmissions = model.transmissions
+        self.pruned_transmissions = model.pruned_transmissions
         self.ranking_options = ranking_options
         if ranking_options:
             self.ranking = ranking_options["ranking"]
@@ -127,6 +146,7 @@ class Scenario():
             t, self, self.observations, self.ranking_options
         )
         self.scores[t]["t"] = t
+        #self.scores[t].to_csv("scores_counts_t%d.csv"%(t), index=False)
 
     def generate_obs(self, t, source, selected):
         list_obs = [
@@ -224,6 +244,11 @@ class Scenario():
             self.scores.to_csv(
                 os.path.join(filename, "scores.csv"), index=False
             )
+            info = pd.DataFrame.from_dict(self.info)
+            info.to_csv(
+                 os.path.join(filename, "info.csv"), index=False
+            ) 
+        """
         print("Saving true transmissions...")
         df_transmissions = pd.DataFrame(
             dict(t=t, i=i, j=j, lamb=lamb)
@@ -233,6 +258,7 @@ class Scenario():
         df_transmissions.to_csv(
             os.path.join(filename, "true_transmissions.csv"), index=False
         )
+        
         params = dict(
             N=self.N, seed=self.seed, t_max=self.t_max,
             ranking_options=self.ranking_options,
@@ -243,6 +269,7 @@ class Scenario():
         json.dump(
             params, open(fname, "w"), indent=4, separators=(',', ': ')
         )
+        """
 
     def update(self, t):
         self.update_states(t)
@@ -262,8 +289,13 @@ class Scenario():
         self.states = np.zeros((t_max, self.N), dtype=int)
         self.quarantine = np.zeros((t_max, self.N), dtype=int)
         self.scores = [None for _ in range(t_max)]
+        self.info = dict()
+        self.info["t"] = list()
+        self.info["pos_ranked"] = list()
+        self.info["inf_cont"] = list()
         self.true_transmissions = self.base_transmissions.copy()
-        self.transmissions = self.base_transmissions.copy()
+        #self.transmissions = self.base_transmissions.copy()
+        self.transmissions = self.pruned_transmissions.copy()
         self.observations = []
         self.select_untracked()
         # select_untracked calls the RNG
@@ -293,12 +325,19 @@ class Scenario():
                     rank_obs = len(obs[(obs['s']==1) & (obs['source']=="ranking")])
                     symp_obs = len(obs[(obs['s']==1) & (obs['source']=="symptomatic")])
                     print(f"obs_symp:{symp_obs_t}({symp_obs}), obs_rank:{rank_obs_t}({rank_obs})")
+                    aux_rank, inf_cont = get_contacts_ranked(self.transmissions, self.observations, t)
+                    self.info["t"].append(t)
+                    self.info["pos_ranked"].append(aux_rank)
+                    self.info["inf_cont"].append(inf_cont)
+                    print(f"pos_rank:{aux_rank}, inf_cont:{inf_cont}")
+
                     if fb == 0:
                         self.ranking = RANKINGS["random"]
                    # print(obs)
                 #print("inside print every")
                 #print(self.counts, self.save_csv)
                 self.counts.to_csv(self.save_csv, index=False, sep="\t")
+
 
         # store as dataframes
         self.status = get_status(self.states, self.quarantine)
@@ -310,7 +349,7 @@ class Scenario():
             self.observations = self.observations[
                 ["source", "t_test", "i", "s", "s_true"]
             ]
-            self.obs_counts = get_obs_counts(self.observations)
+            #self.obs_counts = get_obs_counts(self.observations)
 
     def plot(self, t):
         fig, ax = plt.subplots(1, 1, figsize=(5, 5))

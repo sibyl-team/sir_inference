@@ -1,9 +1,47 @@
 import numpy as np
 import pandas as pd
+import time
+import numba as nb
+import scipy.sparse as sparse
 from inference_model import MeanField, DynamicMessagePassing
 from sir_model import frequency, indicator
+from scipy.sparse import csr_matrix
 import sib
 
+
+
+@nb.njit()
+def count_valid_c1(alli, allj, allt, maxS, minR):
+    """
+    Count valid contacts, given i, j, and t
+    """
+    res = np.zeros(alli.shape[0], dtype=np.bool_)
+    for l in range(alli.shape[0]):
+        i = alli[l]
+        j = allj[l]
+        t = allt[l]
+        if t > max(maxS[i], maxS[j]):
+            if t < minR[j]:
+                res[l] = True
+
+    return res
+
+def create_mat_c2(contacts_cut2, model):
+    mat = []
+    times =[]
+    c2t = contacts_cut2.sort_values("t", ascending=False)
+
+    for t, gr in c2t.groupby("t",sort=False):
+        v = sparse.coo_matrix((np.ones(len(gr),np.int), (gr.i.to_numpy(), gr.j.to_numpy())), shape=(model.N, model.N))
+        if len(mat)> 0:
+            mat.append(v.tocsr()+mat[-1])
+        else:
+            mat.append(v.tocsr())
+        times.append(t)
+        print(f"Appeding contacts, t={t}")
+
+    mat_c2= dict(zip(times, mat))
+    return mat_c2
 
 def csr_to_list(x):
     x_coo = x.tocoo()
@@ -16,6 +54,8 @@ def ranking_inference(t, model, observations, params):
     Run Mean Field from t_start to t, starting from all susceptible and
     resetting the probas according to observations.
 
+    params["lamb"] : lamb
+    params["mu"] : mu
     params["t_start"] : t_start
     params["tau"] : tau
     params["algo"] : "MF" (Mean Field) or "DMP" (Dynamic Message Passing)
@@ -26,6 +66,8 @@ def ranking_inference(t, model, observations, params):
     """
     t_start = params["t_start"]
     tau = params["tau"]
+    mu = params["mu"]
+    lamb = params["lamb"]
     if (t < t_start):
         return ranking_random(t, model, observations, params)
     algo = MeanField if params["algo"] == "MF" else DynamicMessagePassing
@@ -38,10 +80,19 @@ def ranking_inference(t, model, observations, params):
     for obs in observations:
         obs["t"] = obs["t_test"] - t_start
         obs["t_I"] = obs["t"] - tau
+    # set lambda and mu (general)
+    rec_prob = mu*np.ones(model.N)
+    transm = []
+    for t0, A in enumerate(model.transmissions[t_start:t+1]):
+        B = A.copy()
+        B.tocsr()[B.nonzero()] = lamb
+        transm.append(B)
+    #infer.time_evolution(
+    #    model.recover_probas, model.transmissions[t_start:t+1], observations,
+    #    print_every=0
+    #)
     infer.time_evolution(
-        model.recover_probas, model.transmissions[t_start:t+1], observations,
-        print_every=0
-    )
+        rec_prob, transm, observations, print_every=0)
     probas = pd.DataFrame(
         infer.probas[t-t_start, :, :],
         columns=["p_S", "p_I", "p_R"]
@@ -62,7 +113,9 @@ def ranking_backtrack(t, model, observations, params):
 
     Run Mean Field from t - delta to t, starting from all susceptible and
     resetting the probas according to observations.
-
+    
+    params["lamb"] : lamb
+    params["mu"] : mu
     params["delta"] : delta
     params["tau"] : tau
     params["algo"] : "MF" (Mean Field) or "DMP" (Dynamic Message Passing)
@@ -73,6 +126,8 @@ def ranking_backtrack(t, model, observations, params):
     """
     delta = params["delta"]
     tau = params["tau"]
+    mu = params["mu"]
+    lamb = params["lamb"]
     #if (t < delta):
     #    return ranking_random(t, model, observations, params)
     t_start = max(t - delta, 0)
@@ -86,10 +141,19 @@ def ranking_backtrack(t, model, observations, params):
     for obs in observations:
         obs["t"] = obs["t_test"] - t_start
         obs["t_I"] = obs["t"] - tau
+    # set lambda and mu (general)
+    rec_prob = mu*np.ones(model.N)
+    transm = []
+    for t0, A in enumerate(model.transmissions[t_start:t+1]):
+        B = A.copy()
+        B.tocsr()[B.nonzero()] = lamb
+        transm.append(B)
+    #infer.time_evolution(
+    #    model.recover_probas, model.transmissions[t_start:t+1], observations,
+    #    print_every=0
+    #)
     infer.time_evolution(
-        model.recover_probas, model.transmissions[t_start:t+1], observations,
-        print_every=0
-    )
+        rec_prob, transm, observations, print_every=0)
     probas = pd.DataFrame(
         infer.probas[t-t_start, :, :], columns=["p_S", "p_I", "p_R"]
     )
@@ -174,7 +238,7 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     """
     
     from collections import Counter
-    import datetime
+    import pickle, gzip
         
     tau = params["tau"]
     lamb = params["lamb"]
@@ -220,34 +284,43 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     Score = dict([(i, 0) for i in range(model.N)])
     #Score = manager.dict([(i, 0) for i in range(model.N)])
     Count = dict([(i, 0) for i in range(model.N)])
-    contacts_cut2 = dict()
-    if len(contacts_cut) > 0:
-        # (i,j) are both unknown
-        print(datetime.datetime.now(), "make contacts_cut2")
-        #for i in idx_to_inf:
-        #    contacts_cut2[i] = contacts[(contacts["i"] == i) \
-        #                         & (contacts["j"].isin(idx_to_inf))]
+    if len(contacts_cut):
         contacts_cut2 = contacts[(contacts["i"].isin(idx_to_inf)) \
                                 & (contacts["j"].isin(idx_to_inf))]
-        print(datetime.datetime.now(), "end contacts_cut2")
-    idxk = []
-    for i, j, t in contacts_cut[["i", "j", "t"]].to_numpy():
+    valid_idx_c1 = count_valid_c1(*[contacts_cut[k].to_numpy() for k in ("i","j","t")], maxS, minR)
+    good_c1 = contacts_cut.iloc[valid_idx_c1]
+    for i, j, t in good_c1[["i", "j", "t"]].to_numpy():
         # i to be estimated, j is infected
-        if t > max(maxS[i], maxS[j]):
-            if t < minR[j]:
-                Score[i] += lamb + np.random.rand() * noise
-                Count[i] += 1.0
-                # get neighbors k from future contacts (i,k), from the set of the unknown nodes
-                #aux = contacts_cut2[i][(contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-                aux = contacts_cut2[(contacts_cut2["i"] == i) & (contacts_cut2["t"] > max(t, maxS[i]))]["j"].to_numpy()
-                idxk = np.concatenate((idxk, aux), axis = None)
-    print(datetime.datetime.now(), "end 1st loop")
-    sec_NN = len(idxk)
-    value_occ = Counter(idxk).items()
+        Score[i] += lamb + np.random.rand() * noise
+        Count[i] += 1.0
+    mat_c1 = {}
+    for t, gr in good_c1.groupby("t"):
+        v = sparse.coo_matrix((np.ones(len(gr),np.int), (gr.i.to_numpy(), gr.j.to_numpy())), shape=(model.N, model.N))
+        mat_c1[t] = v.tocsr()
+    sec_NN = 0
+    if len(contacts_cut):
+        mat_c2 = create_mat_c2(contacts_cut2, model)
+        sum_counts = None
+        for t in sorted(mat_c1.keys()):
+            ## select the rows (i) where the num is 0
+            ## I have n_i rows 
+            idx_i_c1= np.unique(mat_c1[t].nonzero()[0])      
+            res = mat_c1[t][idx_i_c1,:].sum(1).T * mat_c2[t+1][idx_i_c1,:] ##vector product
+            if sum_counts is None:
+                sum_counts=res
+            else:
+                sum_counts+=res
+        
+        if sum_counts is not None:
+            sec_NN = sum_counts.sum()
+            sum_counts = np.array(sum_counts)[0]
+            idx_nonzero_j = sum_counts.nonzero()[0]
+            counts_j = sum_counts[idx_nonzero_j]
+
+            for (k, occk) in zip(idx_nonzero_j, counts_j):
+                Score[k] += lamb*lamb*occk 
     
-    for (k, occk) in value_occ:
-        Score[k] += lamb*lamb*occk 
-    print(datetime.datetime.now(), "end 2nd loop")
+    #print(datetime.datetime.now(), "end 2nd loop")
 
     print(f"first NN c: {len(contacts_cut)}. second NN c: {sec_NN}")
     
@@ -266,6 +339,9 @@ def ranking_tracing_secnn(T, model, observations, params, noise = 1e-19):
     count = [Count[i] for i in idxrank] 
     #i rank score count
     encounters = pd.DataFrame({"i": list(idxrank), "rank": range(0,model.N), "score": list(scores), "count": count })
+    #print(encounters)
+    #if save_data:
+    #    encounters.to_csv("scores_counts_CT2.csv",index=False)
     return encounters
 
 def ranking_tracing_backtrack(t, model, observations, params):

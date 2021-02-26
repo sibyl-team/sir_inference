@@ -329,6 +329,7 @@ class bp_ranker_class(WinBPProb0Ranker):
     
     def step_scenario(self, t, model, obs, params):
         tau = 0
+        lamb = params["lamb"]
         if hasattr(self, "tau_obs"):
             #print("tau", tau)
             tau = self.tau_obs
@@ -338,8 +339,8 @@ class bp_ranker_class(WinBPProb0Ranker):
         data["logger"] = dummy_logger()
         daily_contacts = []
         if t>0:
-            daily_contacts = [(i, j, t-1, l) for i, j, l in list(csr_to_list(model.transmissions[t-1]))]
-        #print(daily_contacts[0:10])
+            daily_contacts = [(i, j, t-1, lamb) for i, j, l in list(csr_to_list(model.transmissions[t-1])) if l > 0]
+
         daily_obs = []
         print("\nSCENARIO BP")
         if len(obs)!=0:
@@ -358,6 +359,11 @@ class bp_ranker_class(WinBPProb0Ranker):
             rank_algo[:,0] = np.arange(N)
             rank_algo[:,1] = np.random.rand(N)
         else:
+            #### DEBUG ####
+            #print(daily_contacts)
+            #print("###")
+            #print(daily_obs)
+            #print("###")
             rank_algo = self.rank(t, daily_contacts, daily_obs, data)
         rank = sorted(rank_algo, key= lambda tup: tup[1], reverse=True)
         rank = [(int(tup[0]), tup[1])  for tup in rank]
