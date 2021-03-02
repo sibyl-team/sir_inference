@@ -146,7 +146,8 @@ def ranking_backtrack(t, model, observations, params):
     transm = []
     for t0, A in enumerate(model.transmissions[t_start:t+1]):
         B = A.copy()
-        B.tocsr()[B.nonzero()] = lamb
+        B=B.tocsr()
+        B[B.nonzero()] = lamb
         transm.append(B)
     #infer.time_evolution(
     #    model.recover_probas, model.transmissions[t_start:t+1], observations,

@@ -109,7 +109,8 @@ class Scenario():
         self.initial_states = model.initial_states
         self.recover_probas = model.recover_probas
         self.base_transmissions = model.transmissions
-        self.pruned_transmissions = model.pruned_transmissions
+        if hasattr(model, 'pruned_transmissions'):
+            self.pruned_transmissions = model.pruned_transmissions
         self.ranking_options = ranking_options
         if ranking_options:
             self.ranking = ranking_options["ranking"]
@@ -294,8 +295,8 @@ class Scenario():
         self.info["pos_ranked"] = list()
         self.info["inf_cont"] = list()
         self.true_transmissions = self.base_transmissions.copy()
-        #self.transmissions = self.base_transmissions.copy()
-        self.transmissions = self.pruned_transmissions.copy()
+        self.transmissions = self.base_transmissions.copy()
+        #self.transmissions = self.pruned_transmissions.copy()
         self.observations = []
         self.select_untracked()
         # select_untracked calls the RNG
