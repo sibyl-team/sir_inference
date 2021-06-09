@@ -47,6 +47,11 @@ def csr_to_list(x):
     x_coo = x.tocoo()
     return zip(x_coo.row, x_coo.col, x_coo.data)
 
+def csr_to_dataframe(x, columns=["i","j","lamb"]):
+    x_coo = x.tocoo()
+    dr = {columns[0]:x_coo.row, columns[1]:x_coo.col, columns[2]:x_coo.data}
+    return pd.DataFrame(dr)
+
 
 def ranking_inference(t, model, observations, params):
     """Inference starting from t_start.
