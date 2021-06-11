@@ -225,7 +225,8 @@ class Scenario():
         )
 
     def save(self, filename):
-        os.mkdir(filename)
+        if not os.path.exists(filename):
+            os.mkdir(filename)
         print(f"Saving to {filename}")
         self.status.to_csv(
             os.path.join(filename, "status.csv"), index=False
